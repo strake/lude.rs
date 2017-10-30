@@ -11,16 +11,16 @@ pub struct ECS<A: Alloc> {
     alloc: A,
     masks: RawVec<Mask, A>,
     component_ptrs: HashTable<TypeId, *mut u8, ::sip::SipHasher, A>,
-    droppers: HashTable<TypeId, fn(*mut u8, usize, &mut A), ::sip::SipHasher, A>
+    droppers: Unique<fn(*mut u8, usize, &mut A)>
 }
 
 impl<A: Alloc + Clone> ECS<A> {
     #[inline]
-    pub fn with_capacity_in(a: A, cap: usize) -> Option<Self> {
+    pub fn with_capacity_in(mut a: A, cap: usize) -> Option<Self> {
         let mut masks = RawVec::with_capacity_in(a.clone(), cap)?;
         for k in 0..cap { unsafe { masks.storage_mut()[k] = 0; } }
         let cps = HashTable::new_in(a.clone(), (0: Mask).trailing_zeros(), Default::default())?;
-        let ds  = HashTable::new_in(a.clone(), (0: Mask).trailing_zeros(), Default::default())?;
+        let ds = a.alloc_array(cap).ok()?;
         Some(ECS { alloc: a, masks: masks, component_ptrs: cps, droppers: ds })
     }
 }
@@ -30,17 +30,19 @@ impl<A: Alloc> ECS<A> {
     pub fn reg<C: 'static>(&mut self) -> Option<()> {
         let alloc = &mut self.alloc;
         let cap = self.masks.capacity();
-        self.droppers.insert(TypeId::of::<C>(), drop_components::<C, A>).ok()?;
         let ptr: Unique<C> = alloc.alloc_array(cap).ok()?;
         match self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
             Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
-        }) {
-            Ok(_) => Some(()),
-            Err((_, ptr)) => unsafe {
-                Unique::new(ptr).map(|ptr| alloc.dealloc_array(ptr, cap));
+        }).map_err(|(_, ptr)| ptr(None)) {
+            Ok((k, _, _)) => unsafe {
+                ptr::write(self.droppers.as_ptr().offset(k as _), drop_components::<C, A>);
+                Some(())
+            },
+            Err(ptr) => unsafe {
+                let _ = alloc.dealloc_array(Unique::new_unchecked(ptr), cap);
                 None
-            }
+            },
         }
     }
 
@@ -75,14 +77,16 @@ impl<A: Alloc> ECS<A> {
 
 impl<A: Alloc> Drop for ECS<A> {
     fn drop(&mut self) {
-        for ((_, &ptr), (_, &drop)) in Iterator::zip(self.component_ptrs.iter(),
-                                                     self.droppers.iter()) {
-            drop(ptr, self.masks.capacity(), &mut self.alloc)
+        for (k, _, &ptr) in self.component_ptrs.iter_with_ix() {
+            if let Some(f) = unsafe { self.droppers.as_ptr().offset(k as _).as_ref() } {
+                f(ptr, self.masks.capacity(), &mut self.alloc);
+            }
         }
     }
 }
 
 fn drop_components<C, A: Alloc>(ptr: *mut u8, n: usize, a: &mut A) { unsafe {
-    for c in slice::from_raw_parts_mut(ptr as *mut C, n) { ptr::drop_in_place(c); }
-    a.dealloc(ptr, Layout::array::<C>(n).unwrap());
+    let ptr = ptr as *mut C;
+    for c in slice::from_raw_parts_mut(ptr, n) { ptr::drop_in_place(c); }
+    let _ = a.dealloc_array(Unique::new_unchecked(ptr), n);
 } }
