@@ -17,25 +17,26 @@ use siphasher::sip;
 
 type Mask = usize;
 
-pub struct ECS<A: Alloc> {
+pub struct Components<A: Alloc> {
     alloc: A,
     masks: RawVec<Mask, A>,
     component_ptrs: HashTable<TypeId, *mut u8, ::sip::SipHasher, A>,
     droppers: Unique<fn(*mut u8, usize, &mut A)>
 }
 
-impl<A: Alloc + Clone> ECS<A> {
+impl<A: Alloc + Clone> Components<A> {
     #[inline]
     pub fn with_capacity_in(mut a: A, cap: usize) -> Option<Self> {
         let mut masks = RawVec::with_capacity_in(a.clone(), cap)?;
         for k in 0..cap { unsafe { masks.storage_mut()[k] = 0; } }
         let cps = HashTable::new_in(a.clone(), (0: Mask).trailing_zeros(), Default::default())?;
         let ds = a.alloc_array(cap).ok()?;
-        Some(ECS { alloc: a, masks: masks, component_ptrs: cps, droppers: ds })
+        Some(Components { alloc: a, masks: masks, component_ptrs: cps, droppers: ds })
     }
 }
 
-impl<A: Alloc> ECS<A> {
+impl<A: Alloc> Components<A> {
+    /// Register the component type `C`.
     #[inline]
     pub fn reg<C: 'static>(&mut self) -> Option<()> {
         let alloc = &mut self.alloc;
@@ -61,6 +62,7 @@ impl<A: Alloc> ECS<A> {
         self.component_ptrs.find_with_ix(&TypeId::of::<C>()).map(|(k, _, &ptr)| (k, ptr as _))
     }
 
+    /// Get a reference to the component of type `C` of the given entity `k`, if any.
     #[inline]
     pub fn get<C: 'static>(&self, k: usize) -> Option<&C> {
         let (ck, ptr) = self.component()?;
@@ -68,6 +70,8 @@ impl<A: Alloc> ECS<A> {
                  else { None } }
     }
 
+    /// Modify the component of type `C` of the given entity `k`, and whether it has such a
+    /// component.
     #[inline]
     pub fn modify<C: 'static, F: FnOnce(Option<C>) -> Option<C>>(&mut self, k: usize, f: F) { unsafe {
         let (ck, ptr) = match self.component() { None => return, Some(x) => x };
@@ -85,7 +89,7 @@ impl<A: Alloc> ECS<A> {
     } }
 }
 
-impl<A: Alloc> Drop for ECS<A> {
+impl<A: Alloc> Drop for Components<A> {
     fn drop(&mut self) {
         for (k, _, &ptr) in self.component_ptrs.iter_with_ix() {
             if let Some(f) = unsafe { self.droppers.as_ptr().offset(k as _).as_ref() } {
