@@ -1,0 +1,11 @@
+[package]
+name = "lude-ecs"
+version = "0.1.0"
+authors = ["M Farkas-Dyck <strake888@gmail.com>"]
+description = "Entity-Component-System"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+containers = { version = "0.7", default-features = false }
+loca = "0.5"
+siphasher = "0.2"

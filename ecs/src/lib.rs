@@ -1,9 +1,19 @@
+#![no_std]
+
+#![feature(type_ascription)]
+#![feature(unique)]
+
+extern crate containers;
+extern crate loca;
+extern crate siphasher;
+
 use containers::collections::*;
 use core::any::TypeId;
 use core::{ptr, slice};
 use core::ops::*;
 use core::ptr::Unique;
 use loca::*;
+use siphasher::sip;
 
 type Mask = usize;
 

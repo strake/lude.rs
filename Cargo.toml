@@ -1,11 +1,2 @@
-[package]
-name = "lude"
-version = "0.1.0"
-authors = ["M Farkas-Dyck <strake888@gmail.com>"]
-description = "game tools"
-license = "MIT OR Apache-2.0"
-
-[dependencies]
-containers = { version = "0.7", default-features = false }
-loca = "0.5"
-siphasher = "0.2"
+[workspace]
+members = ["ecs"]
