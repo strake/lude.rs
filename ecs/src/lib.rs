@@ -87,13 +87,15 @@ impl<A: Alloc> Components<A> {
     /// Modify the component of type `C` of the given entity `k`, and whether it has such a
     /// component.
     #[inline]
-    pub fn modify<C: 'static, F: FnOnce(Option<C>) -> Option<C>>(&mut self, k: usize, f: F) { unsafe {
+    pub fn modify<C: 'static, F: FnOnce(&mut Option<C>)>(&mut self, k: usize, f: F) { unsafe {
         let (ck, ptr) = match self.component() { None => return, Some(x) => x };
         let ptr = ptr.offset(k as _);
-        match f(if 0 == self.masks.storage()[k] & 1 << ck { None } else {
+        let mut c_opt = if 0 == self.masks.storage()[k] & 1 << ck { None } else {
             self.masks.storage_mut()[k] &= !(1 << ck);
             Some(ptr::read(ptr))
-        }) {
+        };
+        f(&mut c_opt);
+        match c_opt {
             None => (),
             Some(x) => {
                 self.masks.storage_mut()[k] |= 1 << ck;
