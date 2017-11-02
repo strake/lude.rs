@@ -26,10 +26,24 @@ pub struct Components<A: Alloc> {
 
 impl<A: Alloc + Clone> Components<A> {
     #[inline]
-    pub fn with_capacity_in(mut a: A, cap: usize) -> Option<Self> {
-        let mut masks = RawVec::with_capacity_in(a.clone(), cap)?;
+    pub fn with_capacity_in(a: A, cap: usize) -> Option<Self> {
+        Self::with_capacity_(a, cap, Clone::clone)
+    }
+}
+
+impl<A: Alloc + Default> Components<A> {
+    #[inline]
+    pub fn with_capacity(cap: usize) -> Option<Self> {
+        Self::with_capacity_(A::default(), cap, |_| A::default())
+    }
+}
+
+impl<A: Alloc> Components<A> {
+    #[inline(always)]
+    fn with_capacity_<F: Fn(&A) -> A>(mut a: A, cap: usize, f: F) -> Option<Self> {
+        let mut masks = RawVec::with_capacity_in(f(&a), cap)?;
         for k in 0..cap { unsafe { masks.storage_mut()[k] = 0; } }
-        let cps = HashTable::new_in(a.clone(), (0: Mask).trailing_zeros(), Default::default())?;
+        let cps = HashTable::new_in(f(&a), (0: Mask).trailing_zeros(), Default::default())?;
         let ds = a.alloc_array(cap).ok()?;
         Some(Components { alloc: a, masks: masks, component_ptrs: cps, droppers: ds })
     }
