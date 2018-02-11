@@ -6,6 +6,7 @@ description = "Entity-Component-System"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-containers = { version = "0.7", default-features = false }
-loca = "0.5"
+containers = { version = "0.8", default-features = false }
+loca = "0.6"
+ptr = "0.1.4"
 siphasher = "0.2"

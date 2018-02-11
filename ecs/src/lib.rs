@@ -5,14 +5,15 @@
 
 extern crate containers;
 extern crate loca;
+extern crate ptr as ptr_;
 extern crate siphasher;
 
 use containers::collections::*;
 use core::any::TypeId;
 use core::{ptr, slice};
 use core::ops::*;
-use core::ptr::Unique;
 use loca::*;
+use ptr_::Unique;
 use siphasher::sip;
 
 type Mask = usize;
@@ -44,7 +45,7 @@ impl<A: Alloc> Components<A> {
         let mut masks = RawVec::with_capacity_in(f(&a), cap)?;
         for k in 0..cap { unsafe { masks.storage_mut()[k] = 0; } }
         let cps = HashTable::new_in(f(&a), (0: Mask).trailing_zeros(), Default::default())?;
-        let ds = a.alloc_array(cap).ok()?;
+        let ds = a.alloc_array(cap).ok()?.0;
         Some(Components { alloc: a, masks: masks, component_ptrs: cps, droppers: ds })
     }
 }
@@ -55,7 +56,7 @@ impl<A: Alloc> Components<A> {
     pub fn reg<C: 'static>(&mut self) -> Option<()> {
         let alloc = &mut self.alloc;
         let cap = self.masks.capacity();
-        let ptr: Unique<C> = alloc.alloc_array(cap).ok()?;
+        let ptr: Unique<C> = alloc.alloc_array(cap).ok()?.0;
         match self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
             Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
