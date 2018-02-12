@@ -53,21 +53,21 @@ impl<A: Alloc> Components<A> {
 impl<A: Alloc> Components<A> {
     /// Register the component type `C`.
     #[inline]
-    pub fn reg<C: 'static>(&mut self) -> Option<()> {
+    pub fn reg<C: 'static>(&mut self) -> Result<(), Error> {
         let alloc = &mut self.alloc;
         let cap = self.masks.capacity();
-        let ptr: Unique<C> = alloc.alloc_array(cap).ok()?.0;
+        let ptr: Unique<C> = alloc.alloc_array(cap).map_err(|_| Error(()))?.0;
         match self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
             Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
         }).map_err(|(_, ptr)| ptr(None)) {
             Ok((k, _, _)) => unsafe {
                 ptr::write(self.droppers.as_ptr().offset(k as _), drop_components::<C, A>);
-                Some(())
+                Ok(())
             },
             Err(ptr) => unsafe {
                 let _ = alloc.dealloc_array(Unique::new_unchecked(ptr), cap);
-                None
+                Err(Error(()))
             },
         }
     }
@@ -105,6 +105,9 @@ impl<A: Alloc> Components<A> {
         }
     } }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Error(());
 
 impl<A: Alloc> Drop for Components<A> {
     fn drop(&mut self) {
