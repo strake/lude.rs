@@ -9,7 +9,7 @@ extern crate slot;
 
 use containers::collections::RawVec;
 use core::any::TypeId;
-use core::{mem, ptr, slice};
+use core::{mem, ptr};
 use core::ops::*;
 use hash_table::HashTable;
 use loca::*;
@@ -33,7 +33,8 @@ pub struct Components<A: Alloc> {
     entities: RawVec<Enty, A>,
     component_ptrs: HashTable<TypeId, *mut u8, CNArray<usize>, CNArray<Slot<(TypeId, *mut u8)>>,
                               sip::SipHasher>,
-    droppers: [fn(*mut u8, usize, &mut A); component_n],
+    droppers: [unsafe fn(*mut u8); component_n],
+    layouts: [Layout; component_n],
 }
 
 impl<A: Alloc> Components<A> {
@@ -44,8 +45,9 @@ impl<A: Alloc> Components<A> {
         let cps = HashTable::from_parts(CNArray([0; component_n]),
                                         unsafe { mem::uninitialized() },
                                         Default::default());
-        fn no_drop<A>(_: *mut u8, _: usize, _: &mut A) {}
-        Some(Components { entities, component_ptrs: cps, droppers: [no_drop; component_n] })
+        Some(Components { entities, component_ptrs: cps,
+                          droppers: unsafe { mem::uninitialized() },
+                          layouts: unsafe { mem::uninitialized() } })
     }
 }
 
@@ -68,7 +70,9 @@ impl<A: Alloc> Components<A> {
             Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
         }).map_err(|(_, ptr)| ptr(None)) {
             Ok((k, _, _)) => unsafe {
-                ptr::write(self.droppers.as_mut_ptr().offset(k as _), drop_components::<C, A>);
+                self.droppers[k] = mem::transmute::<unsafe fn(*mut C),
+                                                    unsafe fn(*mut u8)>(ptr::drop_in_place::<C>);
+                self.layouts[k] = Layout::new::<C>();
                 Ok(())
             },
             Err(ptr) => unsafe {
@@ -125,17 +129,30 @@ pub struct Error(());
 
 impl<A: Alloc> Drop for Components<A> {
     fn drop(&mut self) {
-        for (k, _, &ptr) in self.component_ptrs.iter_with_ix() {
-            self.droppers[k](ptr, self.entities.capacity(), unsafe { self.entities.alloc_mut() });
-        }
+        for (k, _, &ptr) in self.component_ptrs.iter_with_ix() { unsafe {
+            let n = self.entities.capacity();
+            let layout = self.layouts[k];
+            let (array_layout, size) = layout.repeat(n).unwrap();
+
+            struct Ptrs { ptr: *mut u8, end: *mut u8, size: usize }
+
+            impl Iterator for Ptrs {
+                type Item = *mut u8;
+                fn next(&mut self) -> Option<*mut u8> {
+                    if self.end == self.ptr { None }
+                    else { let ptr = self.ptr; self.ptr = (ptr as usize + self.size) as _; Some(ptr) }
+                }
+            }
+
+            for (&e, ptr) in Iterator::zip(self.entities.storage().iter(),
+                                           Ptrs { ptr, end: ptr.wrapping_offset((size * n) as _), size }) {
+                if 0 != e.mask & 1 << k { self.droppers[k](ptr); }
+            }
+
+            self.entities.alloc_mut().dealloc(ptr, array_layout);
+        } }
     }
 }
-
-fn drop_components<C, A: Alloc>(ptr: *mut u8, n: usize, a: &mut A) { unsafe {
-    let ptr = ptr as *mut C;
-    for c in slice::from_raw_parts_mut(ptr, n) { ptr::drop_in_place(c); }
-    let _ = a.dealloc_array(Unique::new_unchecked(ptr), n);
-} }
 
 #[derive(Clone, Copy)]
 struct CNArray<A>([A; component_n]);
