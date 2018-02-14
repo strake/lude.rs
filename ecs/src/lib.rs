@@ -7,6 +7,8 @@ extern crate ptr as ptr_;
 extern crate siphasher;
 extern crate slot;
 
+#[cfg(test)] extern crate default_allocator;
+
 use containers::collections::RawVec;
 use core::any::TypeId;
 use core::{mem, ptr};
@@ -46,7 +48,7 @@ impl<A: Alloc> Components<A> {
                                         unsafe { mem::uninitialized() },
                                         Default::default());
         Some(Components { entities, component_ptrs: cps,
-                          droppers: unsafe { mem::uninitialized() },
+                          droppers: unsafe { [mem::transmute(mem::align_of::<usize>()); component_n] },
                           layouts: unsafe { mem::uninitialized() } })
     }
 }
@@ -188,4 +190,13 @@ impl<A> Index<::core::ops::RangeFull> for CNArray<A> {
 impl<A> IndexMut<::core::ops::RangeFull> for CNArray<A> {
     #[inline]
     fn index_mut(&mut self, _: ::core::ops::RangeFull) -> &mut [A] { &mut self.0[..] }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test1() {
+        let mut components = super::Components::with_capacity_in(::default_allocator::Heap::default(), 8).unwrap();
+        components.reg::<u32>().unwrap();
+    }
 }
