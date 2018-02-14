@@ -18,12 +18,19 @@ use siphasher::sip;
 use slot::Slot;
 
 type Mask = u64;
+type Version = u64;
 
 const mask_size: usize = mem::size_of::<Mask>();
 const component_n: usize = mask_size << 3;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Enty { mask: Mask, version: Version }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entity { index: usize, version: Version }
+
 pub struct Components<A: Alloc> {
-    masks: RawVec<Mask, A>,
+    entities: RawVec<Enty, A>,
     component_ptrs: HashTable<TypeId, *mut u8, CNArray<usize>, CNArray<Slot<(TypeId, *mut u8)>>,
                               sip::SipHasher>,
     droppers: [fn(*mut u8, usize, &mut A); component_n],
@@ -32,13 +39,13 @@ pub struct Components<A: Alloc> {
 impl<A: Alloc> Components<A> {
     #[inline]
     pub fn with_capacity_in(a: A, cap: usize) -> Option<Self> {
-        let mut masks = RawVec::with_capacity_in(a, cap)?;
-        for k in 0..cap { unsafe { masks.storage_mut()[k] = 0; } }
+        let mut entities = RawVec::with_capacity_in(a, cap)?;
+        for k in 0..cap { unsafe { entities.storage_mut()[k] = Enty { mask: 0, version: 0 }; } }
         let cps = HashTable::from_parts(CNArray([0; component_n]),
                                         unsafe { mem::uninitialized() },
                                         Default::default());
         fn no_drop<A>(_: *mut u8, _: usize, _: &mut A) {}
-        Some(Components { masks, component_ptrs: cps, droppers: [no_drop; component_n] })
+        Some(Components { entities, component_ptrs: cps, droppers: [no_drop; component_n] })
     }
 }
 
@@ -53,8 +60,8 @@ impl<A: Alloc> Components<A> {
     /// Register the component type `C`.
     #[inline]
     pub fn reg<C: 'static>(&mut self) -> Result<(), Error> {
-        let cap = self.masks.capacity();
-        let alloc = unsafe { self.masks.alloc_mut() };
+        let cap = self.entities.capacity();
+        let alloc = unsafe { self.entities.alloc_mut() };
         let ptr: Unique<C> = alloc.alloc_array(cap).map_err(|_| Error(()))?.0;
         match self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
@@ -76,29 +83,37 @@ impl<A: Alloc> Components<A> {
         self.component_ptrs.find_with_ix(&TypeId::of::<C>()).map(|(k, _, &ptr)| (k, ptr as _))
     }
 
-    /// Get a reference to the component of type `C` of the given entity `k`, if any.
+    /// Get a reference to the component of type `C` of the given entity, if any.
     #[inline]
-    pub fn get<C: 'static>(&self, k: usize) -> Option<&C> {
+    pub fn get<C: 'static>(&self, Entity { index: k, version: v }: Entity) -> Option<&C> {
         let (ck, ptr) = self.component()?;
-        unsafe { if 0 != self.masks.storage()[k] & 1 << ck { ptr.offset(k as _).as_ref() }
-                 else { None } }
+        unsafe {
+            let e = self.entities.storage()[k];
+            if v == e.version && 0 != e.mask & 1 << ck { ptr.offset(k as _).as_ref() }
+            else { None }
+        }
     }
 
-    /// Modify the component of type `C` of the given entity `k`, and whether it has such a
+    /// Modify the component of type `C` of the given entity, and whether it has such a
     /// component.
     #[inline]
-    pub fn modify<C: 'static, F: FnOnce(&mut Option<C>)>(&mut self, k: usize, f: F) { unsafe {
+    pub fn modify<C: 'static,
+                  F: FnOnce(&mut Option<C>)>(&mut self,
+                                             Entity { index: k, version: v }: Entity,
+                                             f: F) { unsafe {
         let (ck, ptr) = match self.component() { None => return, Some(x) => x };
         let ptr = ptr.offset(k as _);
-        let mut c_opt = if 0 == self.masks.storage()[k] & 1 << ck { None } else {
-            self.masks.storage_mut()[k] &= !(1 << ck);
+        let e = &mut self.entities.storage_mut()[k];
+        if v != e.version { return; }
+        let mut c_opt = if 0 == e.mask & 1 << ck { None } else {
+            e.mask &= !(1 << ck);
             Some(ptr::read(ptr))
         };
         f(&mut c_opt);
         match c_opt {
             None => (),
             Some(x) => {
-                self.masks.storage_mut()[k] |= 1 << ck;
+                e.mask |= 1 << ck;
                 ptr::write(ptr, x);
             },
         }
@@ -111,7 +126,7 @@ pub struct Error(());
 impl<A: Alloc> Drop for Components<A> {
     fn drop(&mut self) {
         for (k, _, &ptr) in self.component_ptrs.iter_with_ix() {
-            self.droppers[k](ptr, self.masks.capacity(), unsafe { self.masks.alloc_mut() });
+            self.droppers[k](ptr, self.entities.capacity(), unsafe { self.entities.alloc_mut() });
         }
     }
 }
