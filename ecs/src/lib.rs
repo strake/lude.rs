@@ -66,10 +66,14 @@ impl<A: Alloc> Components<A> {
     pub fn reg<C: 'static>(&mut self) -> Result<(), Error> {
         let cap = self.entities.capacity();
         let alloc = unsafe { self.entities.alloc_mut() };
-        let ptr: Unique<C> = alloc.alloc_array(cap).map_err(|_| Error(()))?.0;
+        let ptr: Unique<C> = if 0 == mem::size_of::<C>() { Unique::empty() }
+                             else { alloc.alloc_array(cap).map_err(|_| Error(()))?.0 };
         let (k, _, _) = self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
-            Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
+            Some(p) => unsafe {
+                if 0 != mem::size_of::<C>() { let _ = alloc.dealloc_array(ptr, cap); }
+                p
+            },
         }).map_err(|(_, ptr)| { ptr(Some(0 as _)); Error(()) })?;
         self.droppers[k] = unsafe { mem::transmute::<unsafe fn(*mut C),
                                                      unsafe fn(*mut u8)>(ptr::drop_in_place::<C>) };
@@ -144,7 +148,7 @@ impl<A: Alloc> Drop for Components<A> {
                 if 0 != e.mask & 1 << k { self.droppers[k](ptr); }
             }
 
-            self.entities.alloc_mut().dealloc(ptr, array_layout);
+            if 0 != layout.size() { self.entities.alloc_mut().dealloc(ptr, array_layout); }
         } }
     }
 }
@@ -190,6 +194,7 @@ mod tests {
     #[test]
     fn test1() {
         let mut components = super::Components::with_capacity_in(::default_allocator::Heap::default(), 8).unwrap();
+        components.reg::<()>().unwrap();
         components.reg::<u32>().unwrap();
     }
 }
