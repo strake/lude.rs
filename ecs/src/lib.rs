@@ -67,21 +67,14 @@ impl<A: Alloc> Components<A> {
         let cap = self.entities.capacity();
         let alloc = unsafe { self.entities.alloc_mut() };
         let ptr: Unique<C> = alloc.alloc_array(cap).map_err(|_| Error(()))?.0;
-        match self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
+        let (k, _, _) = self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
             None => ptr.as_ptr() as _,
             Some(p) => unsafe { let _ = alloc.dealloc_array(ptr, cap); p },
-        }).map_err(|(_, ptr)| ptr(None)) {
-            Ok((k, _, _)) => unsafe {
-                self.droppers[k] = mem::transmute::<unsafe fn(*mut C),
-                                                    unsafe fn(*mut u8)>(ptr::drop_in_place::<C>);
-                self.layouts[k] = Layout::new::<C>();
-                Ok(())
-            },
-            Err(ptr) => unsafe {
-                let _ = alloc.dealloc_array(Unique::new_unchecked(ptr), cap);
-                Err(Error(()))
-            },
-        }
+        }).map_err(|(_, ptr)| { ptr(Some(0 as _)); Error(()) })?;
+        self.droppers[k] = unsafe { mem::transmute::<unsafe fn(*mut C),
+                                                     unsafe fn(*mut u8)>(ptr::drop_in_place::<C>) };
+        self.layouts[k] = Layout::new::<C>();
+        Ok(())
     }
 
     #[inline]
