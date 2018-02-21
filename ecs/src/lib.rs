@@ -12,6 +12,7 @@ extern crate slot;
 use containers::collections::RawVec;
 use core::any::TypeId;
 use core::{mem, ptr};
+use core::num::Wrapping as w;
 use core::ops::*;
 use hash_table::HashTable;
 use loca::*;
@@ -20,7 +21,7 @@ use siphasher::sip;
 use slot::Slot;
 
 type Mask = u64;
-type Version = u64;
+type Version = w<u64>;
 
 const mask_size: usize = mem::size_of::<Mask>();
 const component_n: usize = mask_size << 3;
@@ -43,7 +44,7 @@ impl<A: Alloc> Components<A> {
     #[inline]
     pub fn with_capacity_in(a: A, cap: usize) -> Option<Self> {
         let mut entities = RawVec::with_capacity_in(a, cap)?;
-        for k in 0..cap { unsafe { entities.storage_mut()[k] = Enty { mask: 0, version: 0 }; } }
+        for k in 0..cap { unsafe { entities.storage_mut()[k] = Enty { mask: 0, version: w(0) }; } }
         let cps = HashTable::from_parts(CNArray([0; component_n]),
                                         unsafe { mem::uninitialized() },
                                         Default::default());
@@ -121,6 +122,31 @@ impl<A: Alloc> Components<A> {
             },
         }
     } }
+
+    #[inline]
+    pub fn create_entity(&mut self) -> Result<Entity, Error> {
+        for (k, e) in unsafe { self.entities.storage_mut() }.iter_mut().enumerate() {
+            if w(0) == e.version & live_flag {
+                e.version |= live_flag;
+                return Ok(Entity { index: k, version: e.version });
+            }
+        }
+        Err(Error(()))
+    }
+
+    #[inline]
+    pub fn delete_entity(&mut self, Entity { index: k, version: v }: Entity) {
+        let e = unsafe { &mut self.entities.storage_mut()[k] };
+        if v | live_flag == e.version {
+            e.version += w(1);
+            e.version &= !live_flag;
+            for (ck, _, &ptr) in self.component_ptrs.iter_with_ix() {
+                if 0 != e.mask & 1 << ck { unsafe {
+                    self.droppers[ck](ptr.offset((self.layouts[ck].repeat(2).unwrap().1 * k) as _));
+                } }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -152,6 +178,8 @@ impl<A: Alloc> Drop for Components<A> {
         } }
     }
 }
+
+const live_flag: Version = w(!(!0 >> 1));
 
 #[derive(Clone, Copy)]
 struct CNArray<A>([A; component_n]);
