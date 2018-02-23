@@ -4,47 +4,46 @@
 //!
 //! # Example
 //!
-//! ```
-//! let simulator = Simulator::new(tick, state.clone());
+//! ```ignore
+//! let simulator = Simulator::new(tick);
 //! while let frame = simulator.go() {
 //!     state.modify_with_user_input(input());
-//!     draw(frame.simulate(&mut state, step, lerp));
+//!     draw(frame.simulate(&mut state, step,
+//!                         |a| a.part_needed_to_draw(),
+//!                         |b| b,
+//!                         |a| a.part_needed_to_draw().try_clone(),
+//!                         lerp));
 //! }
 
 extern crate clone;
 extern crate idem;
 extern crate time;
 
-use clone::TryClone;
 use core::ops::*;
 use idem::Zero;
 
-pub struct Simulator<State> {
+pub struct Simulator {
     tick: time::Span,
     then: time::Point,
     cumul: time::Span,
     total: time::Span,
-    prior_state: State,
 }
 
-impl<State> Simulator<State> {
-    /// Make a `Simulator` with given simulational `tick` and original `state`.
-    /// The original `state` is never used, except to call `try_clone_from`.
-    /// Nonetheless, it must be given for the program to be well-defined.
+impl Simulator {
+    /// Make a `Simulator` with given simulational `tick`.
     #[inline]
-    pub fn new(tick: time::Span, state: State) -> Self { Simulator {
+    pub fn new(tick: time::Span) -> Self { Simulator {
         tick: tick,
         then: time::Point::now(),
         cumul: Zero::zero,
         total: Zero::zero,
-        prior_state: state,
     } }
 
     /// Return a `Frame` value which can be used to simulate the frame.
     /// The `Frame` remembers when it was created, so intervening code should not
     /// upset the simulation.
     #[inline]
-    pub fn go(&mut self) -> Frame<State> { Frame(self, time::Point::now()) }
+    pub fn go(&mut self) -> Frame { Frame(self, time::Point::now()) }
 
     /// Return the total elapsed time of simulation, including partial ticks.
     #[inline]
@@ -60,9 +59,9 @@ impl<State> Simulator<State> {
     }
 }
 
-pub struct Frame<'a, State: 'a>(&'a mut Simulator<State>, time::Point);
+pub struct Frame<'a>(&'a mut Simulator, time::Point);
 
-impl<'a, State: TryClone> Frame<'a, State> {
+impl<'a> Frame<'a> {
     /// Simulate the frame:
     ///
     /// * compute how much time passed since last frame
@@ -70,19 +69,20 @@ impl<'a, State: TryClone> Frame<'a, State> {
     /// * call `step` for each discrete tick-sized chunk
     /// * call `f` to interpolate up to the remaining partial tick (which may be zero)
     #[inline]
-    pub fn simulate<A, Step, F>(mut self, state: &mut State,
-                                step: Step, f: F) -> Result<A, State::Error>
-      where Step: Fn(&mut State), F: FnOnce(f32, &State, &State) -> A {
+    pub fn simulate<A, B, C, D, E, F, G, H, I,
+                    Step>(mut self, state: &mut A, step: Step,
+                          f: F, g: G, h: H, i: I) -> Result<D, E>
+      where Step: Fn(&mut A), F: Fn(&A) -> C, G: Fn(&B) -> C,
+            H: Fn(&A) -> Result<Option<B>, E>, I: FnOnce(f32, C, C) -> D {
+        let mut prior_state_opt = None;
         self.0.elapse(self.1);
         while self.cumul > Zero::zero {
             self.cumul -= self.tick;
-            if self.cumul < Zero::zero {
-                self.prior_state.try_clone_from(state)?;
-            }
+            if self.cumul < Zero::zero { prior_state_opt = h(state)?; }
             step(state);
         }
-        Ok(f((self.cumul.to_ns() as f32 / self.tick.to_ns() as f32).neg(),
-             &state, if self.cumul == Zero::zero { state } else { &self.prior_state }))
+        Ok(i((self.cumul.to_ns() as f32 / self.tick.to_ns() as f32).neg(),
+             f(state), prior_state_opt.as_ref().map_or(f(state), g)))
     }
 
     /// Return when the `Frame` was created.
@@ -91,14 +91,14 @@ impl<'a, State: TryClone> Frame<'a, State> {
     pub fn now(&self) -> time::Point { self.1 }
 }
 
-impl<'a, State> Deref for Frame<'a, State> {
-    type Target = Simulator<State>;
+impl<'a> Deref for Frame<'a> {
+    type Target = Simulator;
 
     #[inline]
-    fn deref(&self) -> &Simulator<State> { self.0 }
+    fn deref(&self) -> &Simulator { self.0 }
 }
 
-impl<'a, State> DerefMut for Frame<'a, State> {
+impl<'a> DerefMut for Frame<'a> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut Simulator<State> { self.0 }
+    fn deref_mut(&mut self) -> &mut Simulator { self.0 }
 }
