@@ -6,10 +6,10 @@ description = "Entity-Component-System"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-containers = { version = "0.8", default-features = false, git = "https://github.com/strake/containers.rs", rev = "9d47f07735417d5eec5b053b93af486213efce78" }
+containers = { version = "0.9", default-features = false, git = "https://github.com/strake/containers.rs", rev = "518b79c306f9c1eb108010be195bdb1281d89bbf" }
 hash-table = "0.2"
-loca = "0.6"
-ptr = "0.1.4"
+loca = "0.7"
+ptr = "0.2"
 siphasher = "0.2"
 slot = "0.2"
 

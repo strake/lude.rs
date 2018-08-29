@@ -10,10 +10,7 @@ extern crate slot;
 #[cfg(test)] extern crate default_allocator;
 
 use containers::collections::RawVec;
-use core::any::TypeId;
-use core::{mem, ptr};
-use core::num::Wrapping as w;
-use core::ops::*;
+use core::{any::TypeId, mem, num::Wrapping as w, ops::*, ptr::{self, NonNull}};
 use hash_table::HashTable;
 use loca::*;
 use ptr_::Unique;
@@ -70,7 +67,7 @@ impl<A: Alloc> Components<A> {
         let ptr: Unique<C> = if 0 == mem::size_of::<C>() { Unique::empty() }
                              else { alloc.alloc_array(cap).map_err(|_| Error(()))?.0 };
         let (k, _, _) = self.component_ptrs.insert_with(TypeId::of::<C>(), |p_opt| match p_opt {
-            None => ptr.as_ptr() as _,
+            None => ptr.as_ptr().as_ptr() as _,
             Some(p) => unsafe {
                 if 0 != mem::size_of::<C>() { let _ = alloc.dealloc_array(ptr, cap); }
                 p
@@ -174,7 +171,7 @@ impl<A: Alloc> Drop for Components<A> {
                 if 0 != e.mask & 1 << k { self.droppers[k](ptr); }
             }
 
-            if 0 != layout.size() { self.entities.alloc_mut().dealloc(ptr, array_layout); }
+            if 0 != layout.size() { self.entities.alloc_mut().dealloc(NonNull::new_unchecked(ptr), array_layout); }
         } }
     }
 }
