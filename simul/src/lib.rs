@@ -70,7 +70,7 @@ impl<'a> Frame<'a> {
     /// * call `f` to interpolate up to the remaining partial tick (which may be zero)
     #[inline]
     pub fn simulate<A, B, C, D, E, F, G, H, I,
-                    Step>(mut self, state: &mut A, step: Step,
+                    Step>(&mut self, state: &mut A, step: Step,
                           f: F, g: G, h: H, i: I) -> Result<D, E>
       where Step: Fn(&mut A), F: Fn(&A) -> C, G: Fn(&B) -> C,
             H: Fn(&A) -> Result<Option<B>, E>, I: FnOnce(f32, C, C) -> D {
