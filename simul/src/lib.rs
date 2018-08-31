@@ -17,10 +17,12 @@
 
 extern crate clone;
 extern crate idem;
+extern crate slot;
 extern crate time;
 
 use core::ops::*;
 use idem::Zero;
+use slot::Slot;
 
 pub struct Simulator {
     tick: time::Span,
@@ -43,7 +45,7 @@ impl Simulator {
     /// The `Frame` remembers when it was created, so intervening code should not
     /// upset the simulation.
     #[inline]
-    pub fn go(&mut self) -> Frame { Frame(self, time::Point::now()) }
+    pub fn go<F: FnOnce(time::Span)>(&mut self, f: F) -> Frame<F> { Frame(self, time::Point::now(), Slot { x: f }) }
 
     /// Return the total elapsed time of simulation, including partial ticks.
     #[inline]
@@ -59,9 +61,9 @@ impl Simulator {
     }
 }
 
-pub struct Frame<'a>(&'a mut Simulator, time::Point);
+pub struct Frame<'a, F: FnOnce(time::Span)>(&'a mut Simulator, time::Point, Slot<F>);
 
-impl<'a> Frame<'a> {
+impl<'a, _F: FnOnce(time::Span)> Frame<'a, _F> {
     /// Simulate the frame:
     ///
     /// * compute how much time passed since last frame
@@ -91,14 +93,19 @@ impl<'a> Frame<'a> {
     pub fn now(&self) -> time::Point { self.1 }
 }
 
-impl<'a> Deref for Frame<'a> {
+impl<'a, F: FnOnce(time::Span)> Deref for Frame<'a, F> {
     type Target = Simulator;
 
     #[inline]
     fn deref(&self) -> &Simulator { self.0 }
 }
 
-impl<'a> DerefMut for Frame<'a> {
+impl<'a, F: FnOnce(time::Span)> DerefMut for Frame<'a, F> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Simulator { self.0 }
+}
+
+impl<'a, F: FnOnce(time::Span)> Drop for Frame<'a, F> {
+    #[inline]
+    fn drop(&mut self) { (unsafe { self.2.clone().unwrap() })(time::Point::now() - self.1) }
 }

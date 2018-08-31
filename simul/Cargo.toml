@@ -8,4 +8,5 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 clone = "0.1.1"
 idem = "0.1"
+slot = "0.2"
 tempus = { version = "0.2.1", features = ["libc"] }
